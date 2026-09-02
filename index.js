@@ -60,7 +60,7 @@ function formatDate(dateObj) {
 
 bot.start((ctx) => ctx.reply('Bot ដំណើរការរួចរាល់! សូមប្រើ /activate <KEY> ដើម្បីបេីកការប្រេីប្រាស់។'));
 
-// បញ្ជា /genkey
+// បញ្ជា /genkey (គាំទ្រ m/min, h/hr, d/day, mo/month, life)
 bot.command('genkey', (ctx) => {
   const args = ctx.message.text.split(' ')[1] || '30d';
   let durationMs;
@@ -71,9 +71,11 @@ bot.command('genkey', (ctx) => {
   if (input === 'life' || input === 'lifetime') {
     durationMs = 999 * 365 * 24 * 60 * 60 * 1000;
     isLifetime = true;
-  } else if (input.endsWith('m')) {
+  } else if (input.endsWith('mo') || input.endsWith('month') || input.endsWith('months')) {
+    durationMs = (parseInt(input) || 1) * 30 * 24 * 60 * 60 * 1000;
+  } else if (input.endsWith('min') || input.endsWith('m')) {
     durationMs = (parseInt(input) || 30) * 60 * 1000;
-  } else if (input.endsWith('h')) {
+  } else if (input.endsWith('h') || input.endsWith('hr') || input.endsWith('hours')) {
     durationMs = (parseInt(input) || 1) * 60 * 60 * 1000;
   } else {
     durationMs = (parseInt(input) || 30) * 24 * 60 * 60 * 1000;
@@ -117,7 +119,7 @@ bot.command('activate', (ctx) => {
   ctx.reply(`សកម្មជោគជ័យ!\nBot របស់អ្នកអាចប្រើប្រាស់បាន ${expireText}`);
 });
 
-// បញ្ជា /reset (លុបទិន្នន័យដើមចេញទាំងអស់ដើម្បីចាប់ផ្តើមបូកថ្មី)
+// បញ្ជា /reset
 bot.command('reset', (ctx) => {
   if (!isChatActive(ctx.chat.id)) {
     return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
@@ -129,7 +131,7 @@ bot.command('reset', (ctx) => {
   ctx.reply('បាន Reset ទិន្នន័យរួចរាល់! តួលេខសរុបត្រូវបានកំណត់មកត្រឹម 0 វិញ។');
 });
 
-// បញ្ជា /fakepay <ចំនួនទឹកប្រាក់>
+// បញ្ជា /fakepay
 bot.command('fakepay', (ctx) => {
   if (!isChatActive(ctx.chat.id)) {
     return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
@@ -216,7 +218,7 @@ bot.launch().then(() => {
   console.log('Telegram Bot is active!');
   bot.telegram.setMyCommands([
     { command: 'total', description: 'មើលរបាយការណ៍ប្រាក់សរុបប្រចាំថ្ងៃ' },
-    { command: 'reset', description: 'លុបទិន្នន័យប្រាក់សរុបដើមដើម្បីចាប់ផ្តើមថ្មី' },
+    { command: 'reset', description: 'លុបទិន្នន័យប្រាក់សរុបដើម្បីចាប់ផ្តើមថ្មី' },
     { command: 'fakepay', description: 'បង្កើតប្រតិបត្តិការសាកល្បង' },
     { command: 'activate', description: 'បើកដំណើរការអាជ្ញាប័ណ្ណ' },
     { command: 'genkey', description: 'បង្កើត Key ថ្មី (សម្រាប់ Admin)' }
