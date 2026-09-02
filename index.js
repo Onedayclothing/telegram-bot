@@ -17,7 +17,6 @@ if (!BOT_TOKEN) {
 }
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ផ្ទុកទិន្នន័យក្នុង FILE ដើម្បីការពារការបាត់បង់ពេល RESTART ---
 const DATA_FILE = path.join(__dirname, 'db.json');
 
 let db = {
@@ -26,7 +25,6 @@ let db = {
   transactions: []
 };
 
-// ទាញយកទិន្នន័យចាស់មកវិញ
 if (fs.existsSync(DATA_FILE)) {
   try {
     db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -35,17 +33,14 @@ if (fs.existsSync(DATA_FILE)) {
   }
 }
 
-// Function សម្រាប់ Save ទិន្នន័យ
 function saveData() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
 }
 
-// ពិនិត្យមើលថាតើ Group/Chat នោះ Key នៅមានសុពលភាព (មិនទាន់ Expired) ឬទេ
 function isChatActive(chatId) {
   const expireTime = db.activeChats[chatId];
   if (!expireTime) return false;
   
-  // បើផុតកំណត់ (Expired)
   if (Date.now() > expireTime) {
     delete db.activeChats[chatId];
     saveData();
@@ -65,7 +60,7 @@ function formatDate(dateObj) {
 
 bot.start((ctx) => ctx.reply('Bot ដំណើរការរួចរាល់! សូមប្រើ /activate <KEY> ដើម្បីបេីកការប្រេីប្រាស់។'));
 
-// បញ្ជា /genkey (ឧទាហរណ៍៖ /genkey 30d, /genkey 1h, /genkey 10m)
+// បញ្ជា /genkey
 bot.command('genkey', (ctx) => {
   const args = ctx.message.text.split(' ')[1] || '30d';
   let durationMs;
@@ -175,7 +170,7 @@ const handleTotal = (ctx) => {
 bot.command('total', handleTotal);
 bot.command('sum', handleTotal);
 
-// --- SMART MULTI-BANK NOTIFICATION PARSER ---
+// --- SMART MULTI-BANK NOTIFICATION PARSER (SILENT RECORD) ---
 bot.on('text', (ctx) => {
   if (ctx.message.text.startsWith('/')) return;
   if (!isChatActive(ctx.chat.id)) return;
@@ -191,11 +186,10 @@ bot.on('text', (ctx) => {
 
     if (refNo) {
       const isDuplicate = db.transactions.some(t => t.chatId === ctx.chat.id && t.refNo === refNo);
-      if (isDuplicate) {
-        return ctx.reply(`ព្រមាន៖ ប្រតិបត្តិការស្ទួន!\nលេខ Ref: ${refNo} ត្រូវបានកត់ត្រារួចរាល់ហើយ។`);
-      }
+      if (isDuplicate) return; // មិនបាច់ Reply ពេលស្ទួន
     }
 
+    // រក្សាទុកស្ងាត់ៗ មិន Reply តបវិញឡើយ
     db.transactions.push({
       chatId: ctx.chat.id,
       amount: rawAmount,
@@ -204,8 +198,6 @@ bot.on('text', (ctx) => {
       dateStr: formatDate(new Date())
     });
     saveData();
-
-    ctx.reply(`កត់ត្រាជោគជ័យ!\nចំនួន៖ ${currency === 'USD' ? '$' + rawAmount : '៛' + rawAmount.toLocaleString()} ${refNo ? '\nRef: ' + refNo : ''}`);
   }
 });
 
