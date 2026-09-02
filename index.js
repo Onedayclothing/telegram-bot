@@ -117,10 +117,23 @@ bot.command('activate', (ctx) => {
   ctx.reply(`សកម្មជោគជ័យ!\nBot របស់អ្នកអាចប្រើប្រាស់បាន ${expireText}`);
 });
 
+// បញ្ជា /reset (លុបទិន្នន័យដើមចេញទាំងអស់ដើម្បីចាប់ផ្តើមបូកថ្មី)
+bot.command('reset', (ctx) => {
+  if (!isChatActive(ctx.chat.id)) {
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
+  }
+
+  // លុបទិន្នន័យ transactions តែក្នុង Chat នេះចេញ
+  db.transactions = db.transactions.filter(t => t.chatId !== ctx.chat.id);
+  saveData();
+
+  ctx.reply('បាន Reset ទិន្នន័យរួចរាល់! តួលេខសរុបត្រូវបានកំណត់មកត្រឹម 0 វិញ។');
+});
+
 // បញ្ជា /fakepay <ចំនួនទឹកប្រាក់>
 bot.command('fakepay', (ctx) => {
   if (!isChatActive(ctx.chat.id)) {
-    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន ឬ Key របស់អ្នកបានផុតកំណត់ (Expired) ហើយ៖ /activate <KEY>');
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
   }
 
   const args = ctx.message.text.split(' ');
@@ -150,7 +163,7 @@ bot.command('fakepay', (ctx) => {
 // បញ្ជា /total ឬ /sum
 const handleTotal = (ctx) => {
   if (!isChatActive(ctx.chat.id)) {
-    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន ឬ Key របស់អ្នកបានផុតកំណត់ (Expired) ហើយ៖ /activate <KEY>');
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
   }
 
   const todayStr = formatDate(new Date());
@@ -186,10 +199,9 @@ bot.on('text', (ctx) => {
 
     if (refNo) {
       const isDuplicate = db.transactions.some(t => t.chatId === ctx.chat.id && t.refNo === refNo);
-      if (isDuplicate) return; // មិនបាច់ Reply ពេលស្ទួន
+      if (isDuplicate) return;
     }
 
-    // រក្សាទុកស្ងាត់ៗ មិន Reply តបវិញឡើយ
     db.transactions.push({
       chatId: ctx.chat.id,
       amount: rawAmount,
