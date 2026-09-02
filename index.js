@@ -84,7 +84,7 @@ bot.command('genkey', (ctx) => {
   db.keysDB[newKey] = { durationMs, isUsed: false, isLifetime };
   saveData();
 
-  ctx.reply(`KEY ថ្មី (${args.toUpperCase()}):\n/activate ${newKey}\n\nផ្ញើ KEY នេះទៅអតិថិជនសម្រាប់ /activate`);
+  ctx.reply(`KEY ថ្មី (${args.toUpperCase()}):\n\`/activate ${newKey}\` \n\nផ្ញើ KEY នេះទៅអតិថិជនសម្រាប់ /activate`, { parse_mode: 'Markdown' });
 });
 
 // បញ្ជា /activate <KEY>
@@ -123,7 +123,6 @@ bot.command('reset', (ctx) => {
     return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
   }
 
-  // លុបទិន្នន័យ transactions តែក្នុង Chat នេះចេញ
   db.transactions = db.transactions.filter(t => t.chatId !== ctx.chat.id);
   saveData();
 
@@ -213,7 +212,16 @@ bot.on('text', (ctx) => {
   }
 });
 
-bot.launch().then(() => console.log('Telegram Bot is active!'));
+bot.launch().then(() => {
+  console.log('Telegram Bot is active!');
+  bot.telegram.setMyCommands([
+    { command: 'total', description: 'មើលរបាយការណ៍ប្រាក់សរុបប្រចាំថ្ងៃ' },
+    { command: 'reset', description: 'លុបទិន្នន័យប្រាក់សរុបដើមដើម្បីចាប់ផ្តើមថ្មី' },
+    { command: 'fakepay', description: 'បង្កើតប្រតិបត្តិការសាកល្បង' },
+    { command: 'activate', description: 'បើកដំណើរការអាជ្ញាប័ណ្ណ' },
+    { command: 'genkey', description: 'បង្កើត Key ថ្មី (សម្រាប់ Admin)' }
+  ]);
+});
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
