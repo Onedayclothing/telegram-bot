@@ -1,15 +1,15 @@
 const express = require('express');
 const { Telegraf } = require('telegraf');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// ១. បើក Express Web Server សម្រាប់ UptimeRobot
 app.get('/', (req, res) => res.send('OK'));
 app.get('/healthz', (req, res) => res.send('OK'));
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-// ២. ទាញយក Telegram Bot Token
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error("Error: TELEGRAM_BOT_TOKEN is missing!");
@@ -17,16 +17,41 @@ if (!BOT_TOKEN) {
 }
 const bot = new Telegraf(BOT_TOKEN);
 
-// Database បណ្តោះអាសន្ន
-const keysDB = {};         
-const activeChats = {};    
-const transactions = [];   
+// --- ផ្ទុកទិន្នន័យក្នុង FILE ដើម្បីការពារការបាត់បង់ពេល RESTART ---
+const DATA_FILE = path.join(__dirname, 'db.json');
 
-// Helper Functions
+let db = {
+  keysDB: {},
+  activeChats: {},
+  transactions: []
+};
+
+// ទាញយកទិន្នន័យចាស់មកវិញ
+if (fs.existsSync(DATA_FILE)) {
+  try {
+    db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch (err) {
+    console.error("Error reading db.json:", err);
+  }
+}
+
+// Function សម្រាប់ Save ទិន្នន័យ
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
+}
+
+// ពិនិត្យមើលថាតើ Group/Chat នោះ Key នៅមានសុពលភាព (មិនទាន់ Expired) ឬទេ
 function isChatActive(chatId) {
-  const expireTime = activeChats[chatId];
+  const expireTime = db.activeChats[chatId];
   if (!expireTime) return false;
-  return Date.now() < expireTime;
+  
+  // បើផុតកំណត់ (Expired)
+  if (Date.now() > expireTime) {
+    delete db.activeChats[chatId];
+    saveData();
+    return false;
+  }
+  return true;
 }
 
 function formatDate(dateObj) {
@@ -38,7 +63,9 @@ function formatDate(dateObj) {
 
 // --- COMMANDS ---
 
-// បញ្ជា /genkey (គាំទ្រ m = នាទី, h = ម៉ោង, d = ថ្ងៃ, life = Lifetime)
+bot.start((ctx) => ctx.reply('Bot ដំណើរការរួចរាល់! សូមប្រើ /activate <KEY> ដើម្បីបេីកការប្រេីប្រាស់។'));
+
+// បញ្ជា /genkey (ឧទាហរណ៍៖ /genkey 30d, /genkey 1h, /genkey 10m)
 bot.command('genkey', (ctx) => {
   const args = ctx.message.text.split(' ')[1] || '30d';
   let durationMs;
@@ -47,7 +74,7 @@ bot.command('genkey', (ctx) => {
   const input = args.toLowerCase();
 
   if (input === 'life' || input === 'lifetime') {
-    durationMs = 999 * 365 * 24 * 60 * 60 * 1000; // ៩៩៩ ឆ្នាំ
+    durationMs = 999 * 365 * 24 * 60 * 60 * 1000;
     isLifetime = true;
   } else if (input.endsWith('m')) {
     durationMs = (parseInt(input) || 30) * 60 * 1000;
@@ -58,10 +85,11 @@ bot.command('genkey', (ctx) => {
   }
 
   const newKey = `OD-${Math.random().toString(36).substring(2, 8).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-  keysDB[newKey] = { durationMs, isUsed: false, isLifetime };
+  
+  db.keysDB[newKey] = { durationMs, isUsed: false, isLifetime };
+  saveData();
 
-  // ផ្ញើសារក្នុងទម្រង់ Tappable Code Block ងាយស្រួល Tap-to-Copy
-  ctx.reply(`🔑 **KEY ថ្មី (${args.toUpperCase()})៖**\n\`/activate ${newKey}\` \n\nផ្ញើ KEY នេះទៅអតិថិជនសម្រាប់ /activate`, { parse_mode: 'Markdown' });
+  ctx.reply(`KEY ថ្មី (${args.toUpperCase()}):\n/activate ${newKey}\n\nផ្ញើ KEY នេះទៅអតិថិជនសម្រាប់ /activate`);
 });
 
 // បញ្ជា /activate <KEY>
@@ -70,47 +98,82 @@ bot.command('activate', (ctx) => {
   const inputKey = args[1];
 
   if (!inputKey) {
-    return ctx.reply('⚠️ សូមប្រើទម្រង់៖ `/activate <KEY>`', { parse_mode: 'Markdown' });
+    return ctx.reply('សូមប្រើទម្រង់៖ /activate <KEY>');
   }
 
-  const keyData = keysDB[inputKey];
+  const keyData = db.keysDB[inputKey];
   if (!keyData) {
-    return ctx.reply('❌ KEY មិនត្រឹមត្រូវ ឬមិនមាននៅក្នុងប្រព័ន្ធទេ!');
+    return ctx.reply('KEY មិនត្រឹមត្រូវ ឬមិនមាននៅក្នុងប្រព័ន្ធទេ!');
   }
 
   if (keyData.isUsed) {
-    return ctx.reply('⚠️ KEY នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ!');
+    return ctx.reply('KEY នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ!');
   }
 
-  // Activate គណនី
   const expireDate = new Date(Date.now() + keyData.durationMs);
-  activeChats[ctx.chat.id] = expireDate.getTime();
+  db.activeChats[ctx.chat.id] = expireDate.getTime();
   keyData.isUsed = true;
+  saveData();
 
   let expireText = keyData.isLifetime 
-    ? '**គ្មានថ្ងៃផុតកំណត់ (Lifetime)** ♾️' 
-    : `រហូតដល់៖ **${formatDate(expireDate)}**`;
+    ? 'គ្មានថ្ងៃផុតកំណត់ (Lifetime)' 
+    : `រហូតដល់៖ ${formatDate(expireDate)}`;
 
-  ctx.reply(`✅ **សកម្មជោគជ័យ!**\nប៊ូតរបស់អ្នកអាចប្រើប្រាស់បាន ${expireText}`, { parse_mode: 'Markdown' });
+  ctx.reply(`សកម្មជោគជ័យ!\nBot របស់អ្នកអាចប្រើប្រាស់បាន ${expireText}`);
 });
 
-// បញ្ជា /total
-bot.command('total', (ctx) => {
+// បញ្ជា /fakepay <ចំនួនទឹកប្រាក់>
+bot.command('fakepay', (ctx) => {
   if (!isChatActive(ctx.chat.id)) {
-    return ctx.reply('🔒 **សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖** `/activate <KEY>`', { parse_mode: 'Markdown' });
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន ឬ Key របស់អ្នកបានផុតកំណត់ (Expired) ហើយ៖ /activate <KEY>');
+  }
+
+  const args = ctx.message.text.split(' ');
+  const inputAmount = args[1] || '10';
+  
+  let currency = 'USD';
+  if (inputAmount.toLowerCase().includes('khr') || inputAmount.includes('៛')) {
+    currency = 'KHR';
+  }
+
+  const rawAmount = parseFloat(inputAmount.replace(/[^\d.]/g, '')) || 10;
+  const refNo = 'FAKE' + Math.floor(100000 + Math.random() * 900000);
+
+  db.transactions.push({
+    chatId: ctx.chat.id,
+    amount: rawAmount,
+    currency: currency,
+    refNo: refNo,
+    dateStr: formatDate(new Date())
+  });
+  saveData();
+
+  const displayAmount = currency === 'USD' ? `$${rawAmount.toFixed(2)}` : `៛${rawAmount.toLocaleString()}`;
+  ctx.reply(`[FAKE PAYMENT] កត់ត្រាជោគជ័យ!\nចំនួន៖ ${displayAmount}\nRef: ${refNo}`);
+});
+
+// បញ្ជា /total ឬ /sum
+const handleTotal = (ctx) => {
+  if (!isChatActive(ctx.chat.id)) {
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន ឬ Key របស់អ្នកបានផុតកំណត់ (Expired) ហើយ៖ /activate <KEY>');
   }
 
   const todayStr = formatDate(new Date());
   let usdTotal = 0, usdCount = 0;
   let khrTotal = 0, khrCount = 0;
 
-  transactions.filter(t => t.chatId === ctx.chat.id && t.dateStr === todayStr).forEach(t => {
+  db.transactions.filter(t => t.chatId === ctx.chat.id && t.dateStr === todayStr).forEach(t => {
     if (t.currency === 'USD') { usdTotal += t.amount; usdCount++; }
     if (t.currency === 'KHR') { khrTotal += t.amount; khrCount++; }
   });
 
-  ctx.reply(`📊 **របាយការណ៍ប្រាក់សរុបប្រចាំថ្ងៃ (${todayStr})**\n\n💵 **ដុល្លារ (USD):** $${usdTotal.toFixed(2)} (${usdCount} ប្រតិបត្តិការ)\n៛ **រៀល (KHR):** ៛${khrTotal.toLocaleString()} (${khrCount} ប្រតិបត្តិការ)`);
-});
+  const reportText = `របាយការណ៍ប្រាក់សរុបប្រចាំថ្ងៃ (${todayStr})\n\nដុល្លារ (USD): $${usdTotal.toFixed(2)} (${usdCount} ប្រតិបត្តិការ)\nរៀល (KHR): ៛${khrTotal.toLocaleString()} (${khrCount} ប្រតិបត្តិការ)`;
+
+  ctx.reply(reportText);
+};
+
+bot.command('total', handleTotal);
+bot.command('sum', handleTotal);
 
 // --- SMART MULTI-BANK NOTIFICATION PARSER ---
 bot.on('text', (ctx) => {
@@ -119,7 +182,7 @@ bot.on('text', (ctx) => {
 
   const text = ctx.message.text;
   const amountMatch = text.match(/(\$|USD|KHR|៛)?\s*([\d,]+(\.\d{1,2})?)\s*(USD|KHR|ដុល្លារ|រៀល)?/i);
-  const refMatch = text.match(/(Trx\.?\s*ID|Ref|APV|Transaction\s*ID)[:\s]*([A-Z0-0]+)/i);
+  const refMatch = text.match(/(Trx\.?\s*ID|Ref|APV|Transaction\s*ID)[:\s]*([A-Z0-9]+)/i);
 
   if (amountMatch) {
     let rawAmount = parseFloat(amountMatch[2].replace(/,/g, ''));
@@ -127,21 +190,22 @@ bot.on('text', (ctx) => {
     let refNo = refMatch ? refMatch[2] : null;
 
     if (refNo) {
-      const isDuplicate = transactions.some(t => t.chatId === ctx.chat.id && t.refNo === refNo);
+      const isDuplicate = db.transactions.some(t => t.chatId === ctx.chat.id && t.refNo === refNo);
       if (isDuplicate) {
-        return ctx.reply(`⚠️ **ព្រមាន៖ ប្រតិបត្តិការស្ទួន!**\nលេខ Ref: \`${refNo}\` ត្រូវបានកត់ត្រារួចរាល់ហើយ។`, { parse_mode: 'Markdown' });
+        return ctx.reply(`ព្រមាន៖ ប្រតិបត្តិការស្ទួន!\nលេខ Ref: ${refNo} ត្រូវបានកត់ត្រារួចរាល់ហើយ។`);
       }
     }
 
-    transactions.push({
+    db.transactions.push({
       chatId: ctx.chat.id,
       amount: rawAmount,
       currency: currency,
       refNo: refNo,
       dateStr: formatDate(new Date())
     });
+    saveData();
 
-    ctx.reply(`✅ **កត់ត្រាជោគជ័យ!**\n💰 ចំនួន៖ **${currency === 'USD' ? '$' + rawAmount : '៛' + rawAmount.toLocaleString()}** ${refNo ? '\n🧾 Ref: ' + refNo : ''}`);
+    ctx.reply(`កត់ត្រាជោគជ័យ!\nចំនួន៖ ${currency === 'USD' ? '$' + rawAmount : '៛' + rawAmount.toLocaleString()} ${refNo ? '\nRef: ' + refNo : ''}`);
   }
 });
 
