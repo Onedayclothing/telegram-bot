@@ -1,396 +1,264 @@
-<!DOCTYPE html>
-<html lang="km">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Oneday Clothing</title>
-    
-    <!-- CSS Style Structure -->
-    <style>
-        /* General Layout Reset */
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background-color: #f8fafc; color: #0f172a; padding-bottom: 120px; }
+const express = require('express');
+const { Telegraf } = require('telegraf');
+const fs = require('fs');
+const path = require('path');
 
-        /* Top Navigation Bar Style */
-        nav { background: #ffffff; border-bottom: 1px solid #e2e8f0; padding: 12px 16px; position: sticky; top: 0; z-index: 50; display: flex; justify-content: space-between; align-items: center; }
-        .logo { font-size: 20px; font-weight: 800; color: #00C2FF; }
-        .logo span { color: #0f172a; }
-        .nav-right { display: flex; align-items: center; gap: 8px; }
+const app = express();
+const PORT = process.env.PORT || 8080;
 
-        /* Language Switcher Selector Button */
-        .lang-select { background: #f1f5f9; border: 1px solid #cbd5e1; color: #0f172a; padding: 6px 8px; border-radius: 12px; font-size: 12px; font-weight: 700; cursor: pointer; outline: none; }
+app.get('/', (req, res) => res.send('OK'));
+app.get('/healthz', (req, res) => res.send('OK'));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-        .cart-btn { background: #e0f2fe; color: #00C2FF; border: none; padding: 8px 12px; border-radius: 20px; font-size: 13px; font-weight: 700; cursor: pointer; }
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error("Error: TELEGRAM_BOT_TOKEN is missing!");
+  process.exit(1);
+}
+const bot = new Telegraf(BOT_TOKEN);
 
-        /* FB Style Cover Video/Banner Header */
-        .cover-container { width: 100%; background: #ffffff; border-bottom: 1px solid #e2e8f0; margin-bottom: 16px; }
-        .cover-image-box { width: 100%; height: auto; background-color: #0f172a; overflow: hidden; position: relative; }
-        .cover-image-box video, .cover-image-box img { width: 100%; height: auto; display: block; object-fit: contain; }
-        .cover-info { text-align: center; padding: 16px; }
-        .sub-title { font-size: 11px; font-weight: 700; color: #00C2FF; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
-        .main-title { font-size: 22px; font-weight: 900; text-transform: uppercase; }
+const DATA_FILE = path.join(__dirname, 'db.json');
 
-        /* Horizontal Category Navigation Bar */
-        .categories { display: flex; gap: 8px; overflow-x: auto; padding: 0 16px 16px; scrollbar-width: none; }
-        .cat-btn { background: #ffffff; border: 1px solid #cbd5e1; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-        .cat-btn.active { background: #00C2FF; color: #ffffff; border-color: #00C2FF; }
+let db = {
+  keysDB: {},
+  activeChats: {},
+  transactions: []
+};
 
-        /* Product Display Container & Card Style */
-        .container { max-width: 400px; margin: 0 auto; padding: 0 16px; }
-        .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; margin-bottom: 16px; position: relative; }
+if (fs.existsSync(DATA_FILE)) {
+  try {
+    db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch (err) {
+    console.error("Error reading db.json:", err);
+  }
+}
+
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
+}
+
+function isChatActive(chatId) {
+  const expireTime = db.activeChats[chatId];
+  if (!expireTime) return false;
+  
+  if (Date.now() > expireTime) {
+    delete db.activeChats[chatId];
+    saveData();
+    return false;
+  }
+  return true;
+}
+
+function formatDate(dateObj) {
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const y = dateObj.getFullYear();
+  return `${d}/${m}/${y}`;
+}
+
+// --- COMMANDS ---
+
+bot.start((ctx) => ctx.reply('Bot ដំណើរការរួចរាល់! សូមប្រើ /activate <KEY> ដើម្បីបេីកការប្រេីប្រាស់។'));
+
+// បញ្ជា /genkey (គាំទ្រ m/min, h/hr, d/day, mo/month, life)
+bot.command('genkey', (ctx) => {
+  const args = ctx.message.text.split(' ')[1] || '30d';
+  let durationMs;
+  let isLifetime = false;
+
+  const input = args.toLowerCase();
+
+  if (input === 'life' || input === 'lifetime') {
+    durationMs = 999 * 365 * 24 * 60 * 60 * 1000;
+    isLifetime = true;
+  } else if (input.endsWith('mo') || input.endsWith('month') || input.endsWith('months')) {
+    durationMs = (parseInt(input) || 1) * 30 * 24 * 60 * 60 * 1000;
+  } else if (input.endsWith('min') || input.endsWith('m')) {
+    durationMs = (parseInt(input) || 30) * 60 * 1000;
+  } else if (input.endsWith('h') || input.endsWith('hr') || input.endsWith('hours')) {
+    durationMs = (parseInt(input) || 1) * 60 * 60 * 1000;
+  } else {
+    durationMs = (parseInt(input) || 30) * 24 * 60 * 60 * 1000;
+  }
+
+  const newKey = `OD-${Math.random().toString(36).substring(2, 8).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  
+  db.keysDB[newKey] = { durationMs, isUsed: false, isLifetime };
+  saveData();
+
+  ctx.reply(`KEY ថ្មី (${args.toUpperCase()}):\n\`/activate ${newKey}\` \n\nផ្ញើ KEY នេះទៅអតិថិជនសម្រាប់ /activate`, { parse_mode: 'Markdown' });
+});
+
+// បញ្ជា /activate <KEY>
+bot.command('activate', (ctx) => {
+  const args = ctx.message.text.split(' ');
+  const inputKey = args[1];
+
+  if (!inputKey) {
+    return ctx.reply('សូមប្រើទម្រង់៖ /activate <KEY>');
+  }
+
+  const keyData = db.keysDB[inputKey];
+  if (!keyData) {
+    return ctx.reply('KEY មិនត្រឹមត្រូវ ឬមិនមាននៅក្នុងប្រព័ន្ធទេ!');
+  }
+
+  if (keyData.isUsed) {
+    return ctx.reply('KEY នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ!');
+  }
+
+  const expireDate = new Date(Date.now() + keyData.durationMs);
+  db.activeChats[ctx.chat.id] = expireDate.getTime();
+  keyData.isUsed = true;
+  saveData();
+
+  let expireText = keyData.isLifetime 
+    ? 'គ្មានថ្ងៃផុតកំណត់ (Lifetime)' 
+    : `រហូតដល់៖ ${formatDate(expireDate)}`;
+
+  ctx.reply(`សកម្មជោគជ័យ!\nBot របស់អ្នកអាចប្រើប្រាស់បាន ${expireText}`);
+});
+
+// បញ្ជា /reset
+bot.command('reset', (ctx) => {
+  if (!isChatActive(ctx.chat.id)) {
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
+  }
+
+  db.transactions = db.transactions.filter(t => t.chatId !== ctx.chat.id);
+  saveData();
+
+  ctx.reply('បាន Reset ទិន្នន័យរួចរាល់! តួលេខសរុបត្រូវបានកំណត់មកត្រឹម 0 វិញ។');
+});
+
+// បញ្ជា /fakepay
+bot.command('fakepay', (ctx) => {
+  if (!isChatActive(ctx.chat.id)) {
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
+  }
+
+  const args = ctx.message.text.split(' ');
+  const inputAmount = args[1] || '10';
+  
+  let currency = 'USD';
+  if (inputAmount.toLowerCase().includes('khr') || inputAmount.includes('៛')) {
+    currency = 'KHR';
+  }
+
+  const rawAmount = parseFloat(inputAmount.replace(/[^\d.]/g, '')) || 10;
+  const refNo = 'FAKE' + Math.floor(100000 + Math.random() * 900000);
+
+  db.transactions.push({
+    chatId: ctx.chat.id,
+    amount: rawAmount,
+    currency: currency,
+    refNo: refNo,
+    dateStr: formatDate(new Date())
+  });
+  saveData();
+
+  const displayAmount = currency === 'USD' ? `$${rawAmount.toFixed(2)}` : `៛${rawAmount.toLocaleString()}`;
+  ctx.reply(`[FAKE PAYMENT] កត់ត្រាជោគជ័យ!\nចំនួន៖ ${displayAmount}\nRef: ${refNo}`);
+});
+
+// បញ្ជា /total ឬ /sum
+const handleTotal = (ctx) => {
+  if (!isChatActive(ctx.chat.id)) {
+    return ctx.reply('សូមដំណើរការអាជ្ញាប័ណ្ណជាមុនសិន៖ /activate <KEY>');
+  }
+
+  const todayStr = formatDate(new Date());
+  let usdTotal = 0, usdCount = 0;
+  let khrTotal = 0, khrCount = 0;
+
+  db.transactions.filter(t => t.chatId === ctx.chat.id && t.dateStr === todayStr).forEach(t => {
+    if (t.currency === 'USD') { usdTotal += t.amount; usdCount++; }
+    if (t.currency === 'KHR') { khrTotal += t.amount; khrCount++; }
+  });
+
+  const reportText = `របាយការណ៍ប្រាក់សរុបប្រចាំថ្ងៃ (${todayStr})\n\nដុល្លារ (USD): $${usdTotal.toFixed(2)} (${usdCount} ប្រតិបត្តិការ)\nរៀល (KHR): ៛${khrTotal.toLocaleString()} (${khrCount} ប្រតិបត្តិការ)`;
+
+  ctx.reply(reportText);
+};
+
+bot.command('total', handleTotal);
+bot.command('sum', handleTotal);
+
+// --- MESSAGE HANDLER (ONEDAY CLOTHING ORDER PARSER & MULTI-BANK) ---
+bot.on('text', (ctx) => {
+  if (ctx.message.text.startsWith('/')) return;
+  if (!isChatActive(ctx.chat.id)) return;
+
+  const text = ctx.message.text;
+
+  // 1. ពិនិត្យមើលថាតើជាសារបញ្ជាទិញ (Order/Invoice) ពី Website ដែរឬទេ
+  if (text.includes("Oneday Clothing") || text.includes("ចង់កុម្មង់ទិញ")) {
+    const pattern = /\d+\.\s*(.*?)\s*\(Size:\s*([A-Za-z0-9]+)\)\s*x(\d+)\s*=\s*\$([\d\.]+)/g;
+    let matches = [...text.matchAll(pattern)];
+
+    if (matches.length > 0) {
+      let invoiceMsg = "🧾 *ONEDAY CLOTHING - INVOICE*\n";
+      invoiceMsg += "-----------------------------------\n";
+      
+      let grandTotal = 0;
+      matches.forEach((match, index) => {
+        let itemName = match[1].trim();
+        let size = match[2].trim();
+        let qty = parseInt(match[3]);
+        let price = parseFloat(match[4]);
+        let itemTotal = price * qty;
         
-        .img-box { background: #ffffff; height: 380px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-weight: 600; margin-bottom: 12px; overflow: hidden; border: 1px solid #f1f5f9; }
-        .img-box img, .img-box video { width: 100%; height: 100%; object-fit: contain; }
-        
-        .badge { position: absolute; top: 26px; right: 26px; background: #00C2FF; color: white; font-size: 10px; font-weight: 800; padding: 4px 8px; border-radius: 6px; text-transform: uppercase; }
+        grandTotal += itemTotal;
 
-        .prod-title { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
-        .prod-desc { font-size: 12px; color: #64748b; margin-bottom: 8px; line-height: 1.4; }
-        .price { font-size: 18px; font-weight: 800; color: #00C2FF; margin-bottom: 12px; }
+        invoiceMsg += `${index + 1}. *${itemName}*\n`;
+        invoiceMsg += `   • Size: \`${size}\` | ចំនួន: \`${qty}\`\n`;
+        invoiceMsg += `   • តម្លៃ: \`$${itemTotal.toFixed(2)}\`\n`;
+      });
 
-        /* Interactive Size Grid Buttons */
-        .size-label { font-size: 11px; font-weight: 700; color: #64748b; margin-bottom: 6px; text-transform: uppercase; }
-        .size-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 12px; }
-        .size-btn { border: 1px solid #cbd5e1; background: white; padding: 8px 0; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center; }
-        .size-btn.active { background: #00C2FF; color: white; border-color: #00C2FF; }
+      invoiceMsg += "-----------------------------------\n";
+      invoiceMsg += `💰 *ប្រាក់សរុប (Total): \`$${grandTotal.toFixed(2)}\`*\n`;
+      invoiceMsg += "-----------------------------------\n";
+      invoiceMsg += "🙏 អរគុណសម្រាប់ការគាំទ្រ Oneday Clothing!";
 
-        /* Add To Cart Action Button */
-        .btn-add { width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; }
+      return ctx.reply(invoiceMsg, { parse_mode: 'Markdown' });
+    }
+  }
 
-        /* Bottom Floating Bar Layout */
-        .cart-checkout-bar { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #e2e8f0; padding: 12px 16px; z-index: 100; }
-        .bar-content { max-width: 400px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
-        .total-price { font-size: 18px; font-weight: 800; color: #0f172a; }
-        .total-label { font-size: 11px; color: #64748b; font-weight: 600; }
-        .btn-telegram { background: #00C2FF; color: white; border: none; padding: 10px 20px; border-radius: 10px; font-weight: 700; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+  // 2. ប្រសិនបើមិនមែនជាសារបញ្ជាទិញទេ ប្រព័ន្ធនឹងដំណើរការ Smart Multi-Bank Notification Parser ធម្មតា
+  const amountMatch = text.match(/(\$|USD|KHR|៛)?\s*([\d,]+(\.\d{1,2})?)\s*(USD|KHR|ដុល្លារ|រៀល)?/i);
+  const refMatch = text.match(/(Trx\.?\s*ID|Ref|APV|Transaction\s*ID)[:\s]*([A-Z0-9]+)/i);
 
-        /* Slide-up Cart Modal Drawer */
-        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.5); z-index: 200; display: none; justify-content: flex-end; flex-direction: column; }
-        .modal-overlay.active { display: flex; }
-        .modal-content { background: white; border-radius: 20px 20px 0 0; padding: 20px; max-height: 70vh; overflow-y: auto; max-width: 400px; width: 100%; margin: 0 auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 16px; }
-        .modal-title { font-size: 16px; font-weight: 800; }
-        .btn-close { background: #f1f5f9; border: none; font-size: 16px; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
+  if (amountMatch) {
+    let rawAmount = parseFloat(amountMatch[2].replace(/,/g, ''));
+    let currency = (text.includes('KHR') || text.includes('៛') || text.includes('រៀល')) ? 'KHR' : 'USD';
+    let refNo = refMatch ? refMatch[2] : null;
 
-        /* Cart Items Display List */
-        .cart-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f5f9; padding: 10px 0; }
-        .item-info { font-size: 13px; font-weight: 700; }
-        .item-sub { font-size: 11px; color: #64748b; font-weight: 500; }
-        .qty-controls { display: flex; align-items: center; gap: 8px; }
-        .btn-qty { background: #e0f2fe; color: #00C2FF; border: none; width: 26px; height: 26px; border-radius: 6px; font-weight: 800; cursor: pointer; }
-        .empty-msg { text-align: center; color: #94a3b8; padding: 20px 0; font-size: 13px; }
-    </style>
-</head>
-<body>
+    if (refNo) {
+      const isDuplicate = db.transactions.some(t => t.chatId === ctx.chat.id && t.refNo === refNo);
+      if (isDuplicate) return;
+    }
 
-    <!-- 1. Top Navigation Bar Section -->
-    <nav>
-        <div class="logo">Oneday<span>.</span></div>
-        <div class="nav-right">
-            <!-- Language Selection Selector Button -->
-            <select class="lang-select" onchange="changeLanguage(this.value)">
-                <option value="km">🇰🇭 ខ្មែរ</option>
-                <option value="en">🇬🇧 English</option>
-                <option value="zh">🇨🇳 中文</option>
-            </select>
-            <button class="cart-btn" onclick="toggleCartModal()">🛒 <span data-key="cart_btn">កន្ត្រក</span> (<span id="cart-count">0</span>)</button>
-        </div>
-    </nav>
+    db.transactions.push({
+      chatId: ctx.chat.id,
+      amount: rawAmount,
+      currency: currency,
+      refNo: refNo,
+      dateStr: formatDate(new Date())
+    });
+    saveData();
+  }
+});
 
-    <!-- 2. FB Cover Banner Section -->
-    <div class="cover-container">
-        <div class="cover-image-box">
-            <video autoplay loop muted playsinline>
-                <source src="gemini_generated_video_1CCC7921.mp4" type="video/mp4">
-            </video>
-        </div>
-        <div class="cover-info">
-            <div class="sub-title">Simple · Modern · Confident</div>
-            <div class="main-title" data-key="cover_title">BUILD YOUR DREAM STYLE</div>
-        </div>
-    </div>
+bot.launch().then(() => {
+  console.log('Telegram Bot is active!');
+  bot.telegram.setMyCommands([
+    { command: 'total', description: 'មើលរបាយការណ៍ប្រាក់សរុបប្រចាំថ្ងៃ' },
+    { command: 'reset', description: 'លុបទិន្នន័យប្រាក់សរុបដើម្បីចាប់ផ្តើមថ្មី' },
+    { command: 'fakepay', description: 'បង្កើតប្រតិបត្តិការសាកល្បង' },
+    { command: 'activate', description: 'បើកដំណើរការអាជ្ញាប័ណ្ណ' },
+    { command: 'genkey', description: 'បង្កើត Key ថ្មី (សម្រាប់ Admin)' }
+  ]);
+});
 
-    <!-- 3. Category Selectors Bar -->
-    <div class="categories">
-        <button class="cat-btn active" onclick="selectCategory(this)" data-key="cat_all">ទាំងអស់ (All)</button>
-        <button class="cat-btn" onclick="selectCategory(this)" data-key="cat_tops">អាវ (Tops)</button>
-        <button class="cat-btn" onclick="selectCategory(this)" data-key="cat_pants">ខោ (Pants)</button>
-        <button class="cat-btn" onclick="selectCategory(this)" data-key="cat_outerwear">អាវក្រៅ (Outerwear)</button>
-    </div>
-
-    <!-- 4. Main Product Container Area -->
-    <div class="container">
-        <!-- ===== PRODUCT CARD 1 ===== -->
-        <div class="card" id="prod-1">
-            <span class="badge" data-key="badge_bestseller">Bestseller</span>
-            <div class="img-box">
-                <img src="5C81E760-6028-4B66-9ABF-E29488F99C5C.jpeg" alt="T-Shirt Polo Collab OneDay">
-            </div>
-
-            <div class="prod-title" data-key="p1_title">T-Shirt Polo Collab OneDay</div>
-            <div class="prod-desc" data-key="p1_desc">អាវយឺត Polo រចនាបែប Collab Edition ស្អាតសាមញ្ញ ទាន់សម័យ</div>
-            <div class="price">$15.00</div>
-            
-            <div class="size-label" data-key="select_size">ជ្រើសរើសទំហំ (SELECT SIZE)</div>
-            <div class="size-grid">
-                <button class="size-btn" onclick="selectSize(this)">S</button>
-                <button class="size-btn active" onclick="selectSize(this)">M</button>
-                <button class="size-btn" onclick="selectSize(this)">L</button>
-                <button class="size-btn" onclick="selectSize(this)">XL</button>
-                <button class="size-btn" onclick="selectSize(this)">XXL</button>
-            </div>
-            
-            <button class="btn-add" onclick="addToCart('p1_title', 15.00, 'prod-1')">+ <span data-key="add_to_cart">ដាក់ចូលកន្ត្រក</span> (Add to Cart)</button>
-        </div>
-
-        <!-- ===== PRODUCT CARD 2 ===== -->
-        <div class="card" id="prod-2">
-            <span class="badge" data-key="badge_new">New Collection</span>
-            <div class="img-box">
-                <video autoplay loop muted playsinline>
-                    <source src="Male_model_walking_in_studio_202608271814.mp4" type="video/mp4">
-                </video>
-            </div>
-
-            <div class="prod-title" data-key="p2_title">Outfit Smart Casual (Full Set)</div>
-            <div class="prod-desc" data-key="p2_desc">Outfit Smart Casual ដែលមើលទៅទាន់សម័យ សាមញ្ញ ( Full Set )</div>
-            <div class="price">$20.00</div>
-            
-            <div class="size-label" data-key="select_size">ជ្រើសរើសទំហំ (SELECT SIZE)</div>
-            <div class="size-grid">
-                <button class="size-btn" onclick="selectSize(this)">S</button>
-                <button class="size-btn active" onclick="selectSize(this)">M</button>
-                <button class="size-btn" onclick="selectSize(this)">L</button>
-                <button class="size-btn" onclick="selectSize(this)">XL</button>
-                <button class="size-btn" onclick="selectSize(this)">XXL</button>
-            </div>
-            
-            <button class="btn-add" onclick="addToCart('p2_title', 20.00, 'prod-2')">+ <span data-key="add_to_cart">ដាក់ចូលកន្ត្រក</span> (Add to Cart)</button>
-        </div>
-    </div>
-
-    <!-- 5. Bottom Floating Checkout Bar Section -->
-    <div class="cart-checkout-bar">
-        <div class="bar-content">
-            <div onclick="toggleCartModal()" style="cursor: pointer;">
-                <div class="total-label"><span data-key="total_label">សរុប</span> (<span id="items-count">0</span> <span data-key="items_unit">មុខ</span>)</div>
-                <div class="total-price" id="total-price">$0.00</div>
-            </div>
-            <!-- Telegram Order Direct Link -->
-            <a href="https://t.me/OneDayClothingAgent" id="telegram-link" class="btn-telegram">📲 <span data-key="btn_order_telegram">កុម្មង់ទិញតាម Telegram</span></a>
-        </div>
-    </div>
-
-    <!-- 6. Cart Items Modal Drawer Section -->
-    <div class="modal-overlay" id="cartModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <div class="modal-title">🛒 <span data-key="cart_title">ទំនិញក្នុងកន្ត្រករបស់អ្នក</span></div>
-                <button class="btn-close" onclick="toggleCartModal()">✕</button>
-            </div>
-            <div id="cart-list">
-                <div class="empty-msg" data-key="empty_cart">មិនទាន់មានទំនិញក្នុងកន្ត្រកទេ</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 7. Interactive JavaScript & Multi-Language Dictionary Section -->
-    <script>
-        let currentLang = 'km';
-        let cart = {};
-
-        // Multilingual Translation Dictionary
-        const translations = {
-            km: {
-                cart_btn: "កន្ត្រក",
-                cover_title: "BUILD YOUR DREAM STYLE",
-                cat_all: "ទាំងអស់ (All)",
-                cat_tops: "អាវ (Tops)",
-                cat_pants: "ខោ (Pants)",
-                cat_outerwear: "អាវក្រៅ (Outerwear)",
-                badge_bestseller: "Bestseller",
-                badge_new: "New Collection",
-                p1_title: "T-Shirt Polo Collab OneDay",
-                p1_desc: "អាវយឺត Polo រចនាបែប Collab Edition ស្អាតសាមញ្ញ ទាន់សម័យ",
-                p2_title: "Outfit Smart Casual (Full Set)",
-                p2_desc: "Outfit Smart Casual ដែលមើលទៅទាន់សម័យ សាមញ្ញ ( Full Set )",
-                select_size: "ជ្រើសរើសទំហំ (SELECT SIZE)",
-                add_to_cart: "ដាក់ចូលកន្ត្រក",
-                total_label: "សរុប",
-                items_unit: "មុខ",
-                btn_order_telegram: "កុម្មង់ទិញតាម Telegram",
-                cart_title: "ទំនិញក្នុងកន្ត្រករបស់អ្នក",
-                empty_cart: "មិនទាន់មានទំនិញក្នុងកន្ត្រកទេ",
-                msg_hello: "ជម្រាបសួរ Oneday Clothing! ខ្ញុំចង់កុម្មង់ទិញ៖",
-                msg_total: "តម្លៃសរុប"
-            },
-            en: {
-                cart_btn: "Cart",
-                cover_title: "BUILD YOUR DREAM STYLE",
-                cat_all: "All Products",
-                cat_tops: "Tops",
-                cat_pants: "Pants",
-                cat_outerwear: "Outerwear",
-                badge_bestseller: "Bestseller",
-                badge_new: "New Collection",
-                p1_title: "T-Shirt Polo Collab OneDay",
-                p1_desc: "Collab Edition Polo T-Shirt, simple & stylish design.",
-                p2_title: "Outfit Smart Casual (Full Set)",
-                p2_desc: "Smart Casual Outfit - Modern & Simple Style (Full Set).",
-                select_size: "SELECT SIZE",
-                add_to_cart: "Add to Cart",
-                total_label: "Total",
-                items_unit: "items",
-                btn_order_telegram: "Order via Telegram",
-                cart_title: "Your Shopping Cart",
-                empty_cart: "Your cart is currently empty",
-                msg_hello: "Hello Oneday Clothing! I would like to order:",
-                msg_total: "Total Amount"
-            },
-            zh: {
-                cart_btn: "购物车",
-                cover_title: "打造您的理想风格",
-                cat_all: "全部商品",
-                cat_tops: "上衣",
-                cat_pants: "裤子",
-                cat_outerwear: "外套",
-                badge_bestseller: "热销爆款",
-                badge_new: "新品上市",
-                p1_title: "OneDay 联名款 Polo 衫",
-                p1_desc: "联名款 Polo 衫，简约时尚百搭。",
-                p2_title: "商务休闲套装 (全套)",
-                p2_desc: "商务休闲套装，时尚简约 (全套)。",
-                select_size: "选择尺码",
-                add_to_cart: "加入购物车",
-                total_label: "合计",
-                items_unit: "件",
-                btn_order_telegram: "通过 Telegram 订购",
-                cart_title: "您的购物车",
-                empty_cart: "购物车是空的",
-                msg_hello: "您好 Oneday Clothing！我想订购以下商品：",
-                msg_total: "总金额"
-            }
-        };
-
-        // Switch System Language
-        function changeLanguage(lang) {
-            currentLang = lang;
-            const elements = document.querySelectorAll('[data-key]');
-            elements.forEach(el => {
-                const key = el.getAttribute('data-key');
-                if (translations[lang][key]) {
-                    el.innerText = translations[lang][key];
-                }
-            });
-            renderCart();
-        }
-
-        function toggleCartModal() {
-            document.getElementById('cartModal').classList.toggle('active');
-        }
-
-        function selectSize(element) {
-            let sizeGrid = element.parentElement;
-            let buttons = sizeGrid.getElementsByClassName('size-btn');
-            for (let btn of buttons) {
-                btn.classList.remove('active');
-            }
-            element.classList.add('active');
-        }
-
-        function selectCategory(element) {
-            let catContainer = element.parentElement;
-            let buttons = catContainer.getElementsByClassName('cat-btn');
-            for (let btn of buttons) {
-                btn.classList.remove('active');
-            }
-            element.classList.add('active');
-        }
-
-        function addToCart(titleKey, price, cardId) {
-            let card = document.getElementById(cardId);
-            let activeSizeBtn = card.querySelector('.size-btn.active');
-            let selectedSize = activeSizeBtn ? activeSizeBtn.innerText : 'M';
-            let itemKey = `${titleKey}_${selectedSize}`;
-
-            if (cart[itemKey]) {
-                cart[itemKey].qty += 1;
-            } else {
-                cart[itemKey] = { titleKey: titleKey, price: price, size: selectedSize, qty: 1 };
-            }
-
-            renderCart();
-        }
-
-        function changeQty(itemKey, delta) {
-            if (cart[itemKey]) {
-                cart[itemKey].qty += delta;
-                if (cart[itemKey].qty <= 0) {
-                    delete cart[itemKey];
-                }
-            }
-            renderCart();
-        }
-
-        function renderCart() {
-            let cartList = document.getElementById('cart-list');
-            let totalItems = 0;
-            let totalPrice = 0;
-            let itemsHtml = '';
-
-            for (let key in cart) {
-                let item = cart[key];
-                let itemTotal = item.price * item.qty;
-                totalItems += item.qty;
-                totalPrice += itemTotal;
-                let localizedTitle = translations[currentLang][item.titleKey] || item.titleKey;
-
-                itemsHtml += `
-                    <div class="cart-item">
-                        <div>
-                            <div class="item-info">${localizedTitle}</div>
-                            <div class="item-sub">Size: ${item.size} | $${item.price.toFixed(2)}</div>
-                        </div>
-                        <div class="qty-controls">
-                            <button class="btn-qty" onclick="changeQty('${key}', -1)">-</button>
-                            <span style="font-weight:700; font-size:13px;">${item.qty}</span>
-                            <button class="btn-qty" onclick="changeQty('${key}', 1)">+</button>
-                        </div>
-                    </div>
-                `;
-            }
-
-            if (Object.keys(cart).length === 0) {
-                cartList.innerHTML = `<div class="empty-msg">${translations[currentLang].empty_cart}</div>`;
-            } else {
-                cartList.innerHTML = itemsHtml;
-            }
-
-            document.getElementById('cart-count').innerText = totalItems;
-            document.getElementById('items-count').innerText = totalItems;
-            document.getElementById('total-price').innerText = '$' + totalPrice.toFixed(2);
-
-            updateTelegramLink(totalPrice);
-        }
-
-        // Format Dynamic Order Message for Telegram Direct Redirect
-        function updateTelegramLink(totalPrice) {
-            let telegramUsername = "OneDayClothingAgent";
-            let message = `${translations[currentLang].msg_hello}\n`;
-            let index = 1;
-
-            for (let key in cart) {
-                let item = cart[key];
-                let localizedTitle = translations[currentLang][item.titleKey] || item.titleKey;
-                message += `${index}. ${localizedTitle} (Size: ${item.size}) x${item.qty} = $${(item.price * item.qty).toFixed(2)}\n`;
-                index++;
-            }
-            message += `\n${translations[currentLang].msg_total}៖ $${totalPrice.toFixed(2)}`;
-
-            let encodedMessage = encodeURIComponent(message);
-            document.getElementById('telegram-link').href = `https://t.me/${telegramUsername}?text=${encodedMessage}`;
-        }
-    </script>
-
-</body>
-</html>
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
